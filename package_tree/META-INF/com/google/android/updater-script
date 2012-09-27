@@ -1,13 +1,13 @@
+assert(getprop("ro.product.device") == "d2att" || getprop("ro.build.product") == "d2att");
 ui_print("Android Wireless Monitor Kernel for SGS3");
 ui_print("Mount /System Folder...");
-run_program("/sbin/busybox", "mount", "/system");
+mount("ext4", "EMMC", "/dev/block/mmcblk0p14", "/system");
 ui_print("Extracting System Files...");
 package_extract_dir("system", "/system");
 set_perm_recursive(0, 0, 0755, 0755, "/system/etc/init.d");
 ui_print("Extracting Kernel files...");
-assert(package_extract_file("boot.img", "/cache/boot.img"),
-       write_raw_image("/cache/boot.img", "/dev/block/mmcblk0p7"),
-       delete("/cache/boot.img"));
+unmount("/system");
+package_extract_file("boot.img", "/dev/block/mmcblk0p7");
 ui_print("***********************************");
 ui_print("* Kernel Installation Completed!  *");
 ui_print("***********************************");
