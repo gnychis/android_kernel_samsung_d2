@@ -343,6 +343,17 @@ on boot
 # Set this property so surfaceflinger is not started by system_init
     setprop system_init.startsurfaceflinger 0
 
+# Insert the wireless module
+    insmod /system/lib/modules/compat.ko
+    insmod /system/lib/modules/cfg80211.ko
+    insmod /system/lib/modules/mac80211.ko
+    insmod /system/lib/modules/bcmdhd.ko
+    insmod /system/lib/modules/rt2x00lib.ko
+    insmod /system/lib/modules/rt2x00usb.ko
+    insmod /system/lib/modules/rt2500usb.ko
+    insmod /system/lib/modules/rt2800lib.ko
+    insmod /system/lib/modules/rt2800usb.ko
+
 # Run sysinit
     exec /system/bin/sysinit
 
