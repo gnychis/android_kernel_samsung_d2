@@ -51,6 +51,7 @@ struct cpufreq_interactive_cpuinfo {
 	u64 floor_validate_time;
 	u64 hispeed_validate_time;
 	int governor_enabled;
+	int cpu_load;
 };
 
 static DEFINE_PER_CPU(struct cpufreq_interactive_cpuinfo, cpuinfo);
@@ -61,7 +62,15 @@ static cpumask_t speedchange_cpumask;
 static spinlock_t speedchange_cpumask_lock;
 
 /* Hi speed to bump to from lo speed when load burst (default max) */
-static u64 hispeed_freq;
+static unsigned int hispeed_freq;
+
+/* When the boostpulse was activated */
+static u64 boostpulse_boosted_time;
+
+/* How long the boostpulse will remain active */
+#define DEFAULT_BOOSTPULSE_DURATION	500000
+#define MAX_BOOSTPULSE_DURATION		5000000
+static int boostpulse_duration;
 
 /* Go to hi speed when CPU load at or above this value. */
 #define DEFAULT_GO_HISPEED_LOAD 85
@@ -119,6 +128,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 	unsigned int new_freq;
 	unsigned int index;
 	unsigned long flags;
+	u64 now = ktime_to_us(ktime_get());
 
 	smp_rmb();
 
@@ -169,6 +179,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 		load_since_change =
 			100 * (delta_time - delta_idle) / delta_time;
 
+
 	/*
 	 * Choose greater of short-term load (since last idle timer
 	 * started or timer function re-armed itself) or long-term load
@@ -177,8 +188,18 @@ static void cpufreq_interactive_timer(unsigned long data)
 	if (load_since_change > cpu_load)
 		cpu_load = load_since_change;
 
-	if (cpu_load >= go_hispeed_load || boost_val) {
-		if (pcpu->target_freq <= pcpu->policy->min) {
+	pcpu->cpu_load = cpu_load;
+
+	if (boostpulse_boosted_time &&
+			now > boostpulse_boosted_time + boostpulse_duration) {
+		/* Disable the boostpulse. */
+		boostpulse_boosted_time = 0;
+		boostpulse_duration = 0;
+	}
+
+	if (cpu_load >= go_hispeed_load || boost_val || boostpulse_boosted_time) {
+		if (pcpu->target_freq < hispeed_freq &&
+		    hispeed_freq < pcpu->policy->max) {
 			new_freq = hispeed_freq;
 		} else {
 			new_freq = pcpu->policy->max * cpu_load / 100;
@@ -198,7 +219,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 			}
 		}
 	} else {
-		new_freq = pcpu->policy->max * cpu_load / 100;
+		new_freq = hispeed_freq * cpu_load / 100;
 	}
 
 	if (new_freq <= hispeed_freq)
@@ -412,6 +433,8 @@ static int cpufreq_interactive_speedchange_task(void *data)
 
 				if (pjcpu->target_freq > max_freq)
 					max_freq = pjcpu->target_freq;
+
+				cpufreq_notify_utilization(pcpu->policy, (pcpu->cpu_load * pcpu->policy->cur) / pcpu->policy->cpuinfo.max_freq);
 			}
 
 			if (max_freq != pcpu->policy->cur)
@@ -466,7 +489,7 @@ static void cpufreq_interactive_boost(void)
 static ssize_t show_hispeed_freq(struct kobject *kobj,
 				 struct attribute *attr, char *buf)
 {
-	return sprintf(buf, "%llu\n", hispeed_freq);
+	return sprintf(buf, "%u\n", hispeed_freq);
 }
 
 static ssize_t store_hispeed_freq(struct kobject *kobj,
@@ -474,9 +497,9 @@ static ssize_t store_hispeed_freq(struct kobject *kobj,
 				  size_t count)
 {
 	int ret;
-	u64 val;
+	long unsigned int val;
 
-	ret = strict_strtoull(buf, 0, &val);
+	ret = strict_strtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 	hispeed_freq = val;
@@ -609,11 +632,17 @@ static ssize_t store_boostpulse(struct kobject *kobj, struct attribute *attr,
 				const char *buf, size_t count)
 {
 	int ret;
-	unsigned long val;
+	unsigned int val;
 
-	ret = kstrtoul(buf, 0, &val);
+	ret = sscanf(buf, "%u", &val);
 	if (ret < 0)
 		return ret;
+
+	boostpulse_boosted_time = ktime_to_us(ktime_get());
+	if (val > 1 && val <= MAX_BOOSTPULSE_DURATION)
+		boostpulse_duration = val;
+	else
+		boostpulse_duration = DEFAULT_BOOSTPULSE_DURATION;
 
 	trace_cpufreq_interactive_boost("pulse");
 	cpufreq_interactive_boost();
